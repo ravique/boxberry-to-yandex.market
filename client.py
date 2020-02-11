@@ -167,12 +167,12 @@ class YandexMarketClient(Client):
     def multipage_get(self, request: requests.Request, list_name: str) -> list:
         rq = self.prepare_get(request=request)
         response_dict = self.send(rq)
-        entities_list = response_dict.get(list_name)
+        entities_list = response_dict.get(list_name, [])
 
         if not response_dict.get('paging'):
             return entities_list
 
-        while 'nextPageToken' in response_dict.get('paging').keys():
+        while 'nextPageToken' in response_dict.get('paging', {}).keys():
             rq = self.prepare_get(request=request, params={'page_token': response_dict['paging']['nextPageToken']})
             response_dict = self.send(rq)
             new_entities = response_dict.get(list_name)
