@@ -45,11 +45,18 @@ min_delivery_days=<min_delivery_days>
 max_delivery_days=<min_delivery_days>
 ```
 
+# Launch params
+```
+-F, --force-update: Force updates all outlets with data from Boxberry. Default: False
+```
+
 # Roadmap
 
+- <del>Yandex.Market API improvements (change point)</del>
 - Use marshmallow to validate all point fields from Boxberry response
-- Unit tests
-- Yandex.Market API improvements (change point)
+- Optional store points data in DB (Mongo? SQL?) to check updated data
+- Unit tests  
+
 
 ## Authors
 

@@ -1,3 +1,4 @@
+import argparse
 import time
 
 from errors import PointParseError, ClientError, ClientConnectionError
@@ -155,7 +156,7 @@ def delete_all_boxberry_points():
         ym_client.delete_outlet(existing_outlet.get('id'))
 
 
-def run():
+def run(update_existing: bool, ):
     bxb_client = BoxberryClient(token=bxb_config['boxberry_token'])
     ym_client = YandexMarketClient(
         ym_token=ym_config['ym_token'],
@@ -166,12 +167,17 @@ def run():
     existing_ym_codes = ym_client.get_outlets_by_type(outlet_type='bxb')
     logger.info(msg='Got {} existing Boxberry points from YM'.format(len(existing_ym_codes)))
 
+    if update_existing:
+        exclude = set()
+    else:
+        exclude = set(existing_ym_codes.keys())
+
     all_points_in_cities = get_city_bxb_points(bxb_client, get_all_cities(bxb_client))
 
     active_boxberry_points = get_bxb_detailed_points(
         bxb_client,
         points_codes=all_points_in_cities,
-        exclude=set(existing_ym_codes.keys())
+        exclude=exclude
     )
 
     logger.info(msg='Got {} points from Boxberry'.format(len(active_boxberry_points)))
@@ -191,6 +197,29 @@ def run():
                 logger.info(msg='Point id: {}, name: {} was deleted from YM'.format(code, outlet.get('name')))
 
     logger.info(msg='Removed {} outlets from YM'.format(removed_points_count))
+
+    if update_existing:
+        # Update existing points (outlets) on Yandex
+
+        updated_outlets_count = 0
+        for bxb_point_code, bxb_point in active_boxberry_points.items():
+            if bxb_point_code in existing_ym_codes.keys():
+                try:
+                    updated_point_data = convert_bxb_to_ym(bxb_point_code, bxb_point)
+                except PointParseError as e:
+                    logger.error(msg='Can not convert point data: {}'.format(e))
+                    continue
+                try:
+                    ym_client.update_outlet(existing_ym_codes[bxb_point_code].get('id'), updated_point_data)
+                    time.sleep(1)
+                except ClientError or ClientConnectionError as e:
+                    logger.error(msg='Can not update Boxberry point on YM: {}'.format(e))
+                else:
+                    updated_outlets_count += 1
+                    logger.info(msg='Point id: {}, address: {} was updated on YM'.format(bxb_point_code,
+                                                                                         bxb_point.get('Address')))
+
+        logger.info(msg='Updated {} outlets on YM'.format(updated_outlets_count))
 
     # Add new found points (outlets) to Yandex
 
@@ -215,4 +244,17 @@ def run():
 
 
 if __name__ == '__main__':
-    run()
+    bb_arg_parser = argparse.ArgumentParser(
+        description='Analyses usage of words in functions, classes or variables names'
+    )
+
+    bb_arg_parser.add_argument(
+        '-F',
+        "--force-update",
+        action='store_true',
+        help='Force updates all outlets with data from Boxberry. Default: False'
+    )
+
+    args = bb_arg_parser.parse_args()
+
+    run(args.update)

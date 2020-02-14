@@ -49,6 +49,17 @@ class Client:
             post_request.json = payload
         return post_request.prepare()
 
+    def prepare_put(self, request: requests.Request = None, payload=None) -> requests.PreparedRequest:
+        if not request:
+            post_request = deepcopy(self._base_request)
+        else:
+            post_request = request
+
+        post_request.method = 'PUT'
+        if payload:
+            post_request.json = payload
+        return post_request.prepare()
+
     def prepare_delete(self, request: requests.Request = None) -> requests.PreparedRequest:
         if not request:
             delete_request = deepcopy(self._base_request)
@@ -64,13 +75,13 @@ class Client:
              timeout: int = 10) -> Union[list, dict]:
         response = 'No response'
 
-        for i in range(attempts):
+        for i in range(1, attempts):
             response = self._session.send(prepared_request, timeout=self._timeout)
 
             try:
                 dict_response = self.check_and_convert_response(response)
             except ClientConnectionError:
-                logger.warn(msg='{} did not respond. Attempt: {}'.format(self.service_name, i + 1))
+                logger.warn(msg='{} did not respond. Attempt  #{}'.format(self.service_name, i))
                 # Try to perform new request
                 time.sleep(timeout)
             except ClientError as e:
@@ -94,7 +105,8 @@ class BoxberryClient(Client):
         status_code = response.status_code
         loaded_response = json.loads(response.text)
 
-        if str(status_code)[0] == '5' or status_code == 404:  # Server, connection error or 404
+        if str(status_code)[0] == '5' or status_code in (404, 402):
+            # Server, connection error, 404 or incorrect `402: Hit rate limit of 2 parallel requests`
             raise ClientConnectionError(service=self.service_name, error_text=response.text)
 
         elif str(status_code)[0] != '2':
@@ -194,8 +206,18 @@ class YandexMarketClient(Client):
         return {outlet['shopOutletCode']: outlet for outlet in self.get_published_outlets() if
                 outlet.get('shopOutletCode', None) and outlet_type in outlet['shopOutletCode'].split('_')}
 
-    def post_outlet(self, outlet):
-        rq = self.prepare_post(request=self._outlets_url, payload=outlet)
+    def post_outlet(self, bxb_point):
+        rq = self.prepare_post(request=self._outlets_url, payload=bxb_point)
+        self.send(rq)
+
+    def update_outlet(self, outlet_id, bxb_point):
+        outlet_put_request = deepcopy(
+            self._base_request
+        )
+        outlet_put_request.url = self._api_url + 'campaigns/{}/outlets/{}.json'.format(self._ym_campaign_id,
+                                                                                       outlet_id)
+
+        rq = self.prepare_put(request=outlet_put_request, payload=bxb_point)
         self.send(rq)
 
     def delete_outlet(self, outlet_id):
@@ -206,3 +228,4 @@ class YandexMarketClient(Client):
                                                                                           outlet_id)
         rq = self.prepare_delete(request=outlet_delete_request)
         self.send(rq)
+
