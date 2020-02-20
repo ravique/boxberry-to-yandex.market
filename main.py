@@ -79,34 +79,22 @@ def convert_bxb_to_ym(bxb_code: str, bxb_point: dict) -> dict:
         fixed_phone = parse_phone(phone)
 
     schedule_fields = (
-        ('WorkMoBegin', 'WorkMoEnd'),
-        ('WorkTuBegin', 'WorkTuEnd'),
-        ('WorkWeBegin', 'WorkWeEnd'),
-        ('WorkThBegin', 'WorkThEnd'),
-        ('WorkFrBegin', 'WorkFrEnd'),
-        ('WorkSaBegin', 'WorkSaEnd'),
-        ('WorkSuBegin', 'WorkSuEnd'),
+        ('WorkMoBegin', 'WorkMoEnd', 'MONDAY',),
+        ('WorkTuBegin', 'WorkTuEnd', 'TUESDAY',),
+        ('WorkWeBegin', 'WorkWeEnd', 'WEDNESDAY',),
+        ('WorkThBegin', 'WorkThEnd', 'THURSDAY',),
+        ('WorkFrBegin', 'WorkFrEnd', 'FRIDAY',),
+        ('WorkSaBegin', 'WorkSaEnd', 'SATURDAY',),
+        ('WorkSuBegin', 'WorkSuEnd', 'SUNDAY'),
     )
-
-    bxb_ym_schedule_dict = {
-        'WorkMoBegin': 'MONDAY',
-        'WorkTuBegin': 'TUESDAY',
-        'WorkWeBegin': 'WEDNESDAY',
-        'WorkThBegin': 'TUESDAY',
-        'WorkFrBegin': 'FRIDAY',
-        'WorkSaBegin': 'SATURDAY',
-        'WorkSuBegin': 'SUNDAY'
-    }
-
     schedule = []
 
-    for begin, end in schedule_fields:
+    for begin, end, ym_key in schedule_fields:
         if bxb_point.get(begin, False) and bxb_point.get(end, False):
-            ym_day = bxb_ym_schedule_dict[begin]
             schedule.append(
                 {
-                    'startDay': ym_day,
-                    'endDay': ym_day,
+                    'startDay': ym_key,
+                    'endDay': ym_key,
                     'startTime': bxb_point.get(begin),
                     'endTime': bxb_point.get(end)
                 }
@@ -257,4 +245,4 @@ if __name__ == '__main__':
 
     args = bb_arg_parser.parse_args()
 
-    run(args.update)
+    run(args.force_update)
