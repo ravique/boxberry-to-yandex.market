@@ -5,6 +5,7 @@ from typing import Optional, Union
 
 import requests
 
+from config_parser import general_config
 from errors import BoxberryError, ClientError, ClientConnectionError
 from logger import logger
 
@@ -71,11 +72,10 @@ class Client:
 
     def send(self,
              prepared_request: requests.PreparedRequest,
-             attempts: int = 5,
              timeout: int = 10) -> Union[list, dict]:
         response = 'No response'
 
-        for i in range(1, attempts):
+        for i in range(1, int(general_config['max_attempts'])):
             response = self._session.send(prepared_request, timeout=self._timeout)
 
             try:
@@ -89,7 +89,8 @@ class Client:
                 raise e
             else:
                 return dict_response
-        raise ClientConnectionError('Can not get data after {} attempts. {}'.format(attempts, response.text))
+        raise ClientConnectionError('Can not get data after {} attempts. {}'.format(int(general_config['max_attempts']),
+                                                                                    response.text))
 
 
 class BoxberryClient(Client):
