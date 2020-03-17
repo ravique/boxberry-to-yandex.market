@@ -3,13 +3,12 @@ import time
 
 from errors import PointParseError, ClientError, ClientConnectionError
 from logger import logger
-from client import BoxberryClient, BoxberryError, YandexMarketClient
+from client import BoxberryClient, BoxberryError, YandexMarketClient, convert_region_names_for_yandex
 from config_parser import bxb_config, ym_config
 from phoneparser import parse_phone
 
 
-def get_all_cities(bxb_client: BoxberryClient) -> list:
-    region_names = bxb_config['region_names'].split(',')
+def get_all_cities(bxb_client: BoxberryClient, region_names: str) -> list:
     region_city_codes = []
     if region_names:
         try:
@@ -144,13 +143,22 @@ def delete_all_boxberry_points():
         ym_client.delete_outlet(existing_outlet.get('id'))
 
 
-def run(update_existing: bool, ):
+def run(update_existing: bool, recreate_yandex_base: bool):
+
     bxb_client = BoxberryClient(token=bxb_config['boxberry_token'])
     ym_client = YandexMarketClient(
         ym_token=ym_config['ym_token'],
         ym_client_id=ym_config['ym_client_id'],
         ym_campaign_id=ym_config['campaign_id']
     )
+
+    if recreate_yandex_base:
+        all_points = bxb_client.get_points_list()
+
+        for point in all_points:
+            point = convert_region_names_for_yandex(point)
+            region_id = ym_client.get_region_id(point)
+
 
     existing_ym_codes = ym_client.get_outlets_by_type(outlet_type='bxb')
     logger.info(msg='Got {} existing Boxberry points from YM'.format(len(existing_ym_codes)))
@@ -160,7 +168,8 @@ def run(update_existing: bool, ):
     else:
         exclude = set(existing_ym_codes.keys())
 
-    all_points_in_cities = get_city_bxb_points(bxb_client, get_all_cities(bxb_client))
+    region_names = bxb_config['region_names'].split(',')
+    all_points_in_cities = get_city_bxb_points(bxb_client, get_all_cities(bxb_client, region_names))
 
     active_boxberry_points = get_bxb_detailed_points(
         bxb_client,

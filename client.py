@@ -4,10 +4,12 @@ from copy import deepcopy
 from typing import Optional, Union
 
 import requests
+from requests import ReadTimeout
 
 from config_parser import general_config
 from errors import BoxberryError, ClientError, ClientConnectionError
 from logger import logger
+from normalize_dict import STRONG_NORMALIZE, REGULAR_NORMALIZE
 
 
 class Client:
@@ -76,7 +78,11 @@ class Client:
         response = 'No response'
 
         for i in range(1, int(general_config['max_attempts'])):
-            response = self._session.send(prepared_request, timeout=self._timeout)
+
+            try:
+                response = self._session.send(prepared_request, timeout=self._timeout)
+            except ReadTimeout:
+                continue
 
             try:
                 dict_response = self.check_and_convert_response(response)
@@ -134,6 +140,10 @@ class BoxberryClient(Client):
         if city_code:
             params.update({'CityCode': city_code})
         pr = self.prepare_get(params=params)
+        return self.send(pr)
+
+    def get_points_list(self):
+        pr = self.prepare_get(params={'method': 'ListPoints'})
         return self.send(pr)
 
     # Helpers
@@ -230,3 +240,68 @@ class YandexMarketClient(Client):
         rq = self.prepare_delete(request=outlet_delete_request)
         self.send(rq)
 
+    def get_region_id(self, bxb_point, attempts=10):
+        region_get_request = deepcopy(
+            self._base_request
+        )
+
+        city_name = bxb_point.get('CityName')
+        if not city_name:
+            return
+
+        region_get_request.url = self._api_url + 'regions.json'
+        region_get_request.params.update({'name': city_name})
+
+        rq = self.prepare_get(request=region_get_request)
+
+        for _ in range(attempts):
+            try:
+                regions_response = self.send(rq)
+            except ClientError:
+                continue
+
+            regions = regions_response.get('regions')
+
+            if not regions:
+                raise ClientError('No region {} was found in Yandex.API'.format(city_name))
+
+            if len(regions) > 1:
+                for region in regions:
+                    region_id = None
+                    found_areas = []
+                    area_name = bxb_point.get('Area')
+
+                    while 'parent' in region.keys():
+                        if region.get('type') in ('TOWN', 'CITY', 'REPUBLIC_AREA') and not region_id:
+                            region_id = region['id']
+                        found_areas.append(region.get('name'))
+                        region = region['parent']
+
+                    if area_name in found_areas:
+                        return region_id
+
+            else:
+                region = regions[0]
+                while 'parent' in region.keys():
+                    if region.get('type') in ('TOWN', 'CITY', 'REPUBLIC_AREA'):
+                        return region['id']
+                    region = region['parent']
+
+
+def convert_region_names_for_yandex(point):
+    area = point.get('Area')
+    strong_normalized = False
+    for item, replacement in STRONG_NORMALIZE.items():
+        if item in area:
+            area = area.replace(item, replacement)
+            strong_normalized = True
+
+    if not strong_normalized:
+        if 'Респ' in area:
+            area = 'Республика {}'.format(area)
+        for item, replacement in REGULAR_NORMALIZE.items():
+            area = area.replace(item, replacement)
+
+    point['Area'] = area
+
+    return point
