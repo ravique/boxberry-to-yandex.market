@@ -4,7 +4,7 @@ import time
 from errors import PointParseError, ClientError, ClientConnectionError
 from logger import logger
 from client import BoxberryClient, BoxberryError, YandexMarketClient
-from config_parser import bxb_config, ym_config
+from config_parser import bxb_config, ym_config, general_config
 from phoneparser import parse_phone
 
 
@@ -129,7 +129,7 @@ def convert_bxb_to_ym(bxb_code: str, bxb_point: dict) -> dict:
                 }
             ],
         'emails':
-            ['info@medovayalavka.ru']
+            [general_config['emails'],]
     }
 
 
