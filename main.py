@@ -1,10 +1,13 @@
 import argparse
 import time
+from datetime import date
 
+from db import session
 from errors import PointParseError, ClientError, ClientConnectionError
 from logger import logger
 from client import BoxberryClient, BoxberryError, YandexMarketClient, convert_region_names_for_yandex
 from config_parser import bxb_config, ym_config, general_config
+from models import YandexRegion
 from phoneparser import parse_phone
 
 
@@ -157,8 +160,24 @@ def run(update_existing: bool, recreate_yandex_base: bool):
 
         for point in all_points:
             point = convert_region_names_for_yandex(point)
-            region_id = ym_client.get_region_id(point)
+            city_name = point.get('CityName')
+            region = point.get('Area')
+            rate_zone = point.get('TariffZone')
 
+            city_instance = session.query(YandexRegion).filter_by(city_name=city_name, region=region).one_or_none()
+
+            if not city_instance or city_instance.updated != date.today():
+                try:
+                    region_id = ym_client.get_region_id(point)
+                except ClientError:
+                    continue
+                else:
+                    YandexRegion.create_or_update(city_name=city_name,
+                                                  yandex_id=region_id,
+                                                  region=region,
+                                                  rate_zone=rate_zone)
+
+    return
 
     existing_ym_codes = ym_client.get_outlets_by_type(outlet_type='bxb')
     logger.info(msg='Got {} existing Boxberry points from YM'.format(len(existing_ym_codes)))
@@ -252,6 +271,13 @@ if __name__ == '__main__':
         help='Force updates all outlets with data from Boxberry. Default: False'
     )
 
+    bb_arg_parser.add_argument(
+        '-UR',
+        "--update-regions",
+        action='store_true',
+        help='Updates local db of Yandex region ids. Default: False'
+    )
+
     args = bb_arg_parser.parse_args()
 
-    run(args.force_update)
+    run(args.force_update, args.update_regions)
