@@ -46,7 +46,7 @@ If you want to assign custom delivery cost for selected city OR region, add it t
 ```ini
 [Boxberry]
 boxberry_token=<boxberry_token>
-region_names=<region name or region names, split by comma>
+region_names=<region name or region names, split by comma OR all if you ship Russia-wide>
 city_names=<city name or city names, split by comma>
 target_start=<boxberry id of your drop off point> 
 default_weight=<default parcel weight in grams>

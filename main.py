@@ -54,13 +54,15 @@ def update_rate(rate: int):
 
 
 def get_rate_override(city: str = None, region: str = None):
-    override_rate_by_region = session.query(DeliveryCostOverride).filter_by(region_name=region).one_or_none()
-    if override_rate_by_region:
-        return override_rate_by_region
+    if region:
+        override_rate_by_region = session.query(DeliveryCostOverride).filter_by(region_name=region).one_or_none()
+        if override_rate_by_region:
+            return override_rate_by_region
 
-    override_rate_by_city = session.query(DeliveryCostOverride).filter_by(city_name=city).one_or_none()
-    if override_rate_by_city:
-        return override_rate_by_city
+    if city:
+        override_rate_by_city = session.query(DeliveryCostOverride).filter_by(city_name=city).one_or_none()
+        if override_rate_by_city:
+            return override_rate_by_city
 
     return False
 
@@ -340,7 +342,10 @@ def run(update_existing: bool, run_update_db: bool):
     else:
         exclude = set(existing_ym_codes.keys())
 
-    points_from_bxb_response = get_city_bxb_points(get_all_cities(region_names, city_names))
+    if region_names == ['all']:
+        points_from_bxb_response = bxb_client.get_points_codes_list()
+    else:
+        points_from_bxb_response = get_city_bxb_points(get_all_cities(region_names, city_names))
 
     active_boxberry_points = get_bxb_detailed_points(
         points_codes=points_from_bxb_response,
