@@ -142,8 +142,22 @@ class BoxberryClient(Client):
         pr = self.prepare_get(params=params)
         return self.send(pr)
 
-    def get_points_list(self):
-        pr = self.prepare_get(params={'method': 'ListPoints'})
+    def get_points_list(self, city_code: int = None):
+        params = {'method': 'ListPoints'}
+        if city_code:
+            params.update({'CityCode': city_code})
+        pr = self.prepare_get(params=params)
+        return self.send(pr)
+
+    def get_point_rate(self, point_code: str, default_weight: int, target_start: str):
+        params = {
+            'method': 'DeliveryCosts',
+            'weight': default_weight,
+            'target': point_code,
+            'target_start': target_start,
+        }
+
+        pr = self.prepare_get(params=params)
         return self.send(pr)
 
     # Helpers

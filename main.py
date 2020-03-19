@@ -1,17 +1,18 @@
 import argparse
 import time
 from datetime import date
+from math import ceil
 
 from db import session
-from errors import PointParseError, ClientError, ClientConnectionError
+from errors import PointParseError, ClientError, ClientConnectionError, ConfigError
 from logger import logger
 from client import BoxberryClient, BoxberryError, YandexMarketClient, convert_region_names_for_yandex
 from config_parser import bxb_config, ym_config, general_config
-from models import YandexRegion
+from models import YandexRegion, DeliveryCostOverride
 from phoneparser import parse_phone
 
 
-def get_all_cities(bxb_client: BoxberryClient, region_names: str) -> list:
+def get_all_cities(region_names: list, city_names: list) -> list:
     region_city_codes = []
     if region_names:
         try:
@@ -24,7 +25,6 @@ def get_all_cities(bxb_client: BoxberryClient, region_names: str) -> list:
             except BoxberryError as e:
                 logger.error(msg='Can not get city codes of region(s) {}. {}'.format(str(region_names), e))
 
-    city_names = bxb_config['city_names'].split(',')
     city_codes = []
     if city_names:
         try:
@@ -35,7 +35,7 @@ def get_all_cities(bxb_client: BoxberryClient, region_names: str) -> list:
     return region_city_codes + city_codes
 
 
-def get_city_bxb_points(bxb_client: BoxberryClient, cities_list: list) -> set:
+def get_city_bxb_points(cities_list: list) -> set:
     points = []
     for code in cities_list:
         try:
@@ -49,7 +49,23 @@ def get_city_bxb_points(bxb_client: BoxberryClient, cities_list: list) -> set:
     return set(points_codes)
 
 
-def get_bxb_detailed_points(bxb_client: BoxberryClient, points_codes: set, exclude: set) -> dict:
+def update_rate(rate: int):
+    return ceil(rate) // 10 * 10 + int(bxb_config['picking_fee'])
+
+
+def get_rate_override(city: str = None, region: str = None):
+    override_rate_by_region = session.query(DeliveryCostOverride).filter_by(region_name=region).one_or_none()
+    if override_rate_by_region:
+        return override_rate_by_region
+
+    override_rate_by_city = session.query(DeliveryCostOverride).filter_by(city_name=city).one_or_none()
+    if override_rate_by_city:
+        return override_rate_by_city
+
+    return False
+
+
+def get_bxb_detailed_points(points_codes: set, exclude: set, target_start: str, default_weight: int) -> dict:
     if exclude:
         digit_exclude_codes = [code.replace('bxb_', '') for code in exclude]
         cleaned_points = points_codes - set(digit_exclude_codes)
@@ -64,18 +80,72 @@ def get_bxb_detailed_points(bxb_client: BoxberryClient, points_codes: set, exclu
         try:
             detailed_point = bxb_client.get_point_info(point_code=point_code)
             time.sleep(1)
+
+            override_rate = get_rate_override(city=detailed_point.get('CityName'), region=detailed_point.get('Area'))
+
+            point_delivery_info = bxb_client.get_point_rate(
+                point_code=point_code,
+                default_weight=default_weight,
+                target_start=target_start
+            )
+
+            for field in ('price', 'delivery_period'):
+                if point_delivery_info.get(field, False) == False:
+                    raise PointParseError(
+                        'bxb did not return field {} for point {}. Point skipped'.format(field, point_code)
+                    )
+
+            if not override_rate:
+                point_final_rate = update_rate(point_delivery_info.get('price'))
+            else:
+                point_final_rate = override_rate.rate
+            min_delivery_days = int(point_delivery_info.get('delivery_period')) + int(bxb_config.get('picking_time', 0))
+            max_delivery_days = min_delivery_days + int(bxb_config.get('delivery_window', 0))
+            time.sleep(1)
+
+            detailed_point.update({
+                'rate': point_final_rate,
+                'min_delivery_days': min_delivery_days,
+                'max_delivery_days': max_delivery_days
+            })
+
         except BoxberryError as e:
             logger.warning(msg='Detailed info about point {} did not found. {}'.format(point_code, e))
+        except PointParseError as e:
+            logger.warning(msg=e)
         else:
             points_detailed_dict['bxb_{}'.format(point_code)] = detailed_point
 
+    logger.info(msg='Got {} points from Boxberry'.format(len(points_detailed_dict)))
     return points_detailed_dict
 
 
-def convert_bxb_to_ym(bxb_code: str, bxb_point: dict) -> dict:
+def get_yandex_region_id_from_db(ready_for_yandex_point) -> int:
+    city_name = ready_for_yandex_point.get('CityName')
+    region_name = ready_for_yandex_point.get('Area')
+
+    region = session.query(YandexRegion).filter_by(
+        city_name=city_name,
+        region=region_name
+    ).one_or_none()
+
+    if not region:
+        raise PointParseError('Code for {}, {} did not found in local db'.format(city_name, region_name))
+
+    return region.yandex_id
+
+
+def convert_bxb_to_ym(bxb_code: str, bxb_point: dict, emails: list) -> dict:
     name = bxb_point.get('Name')
     address = bxb_point.get('Address')
     phone = bxb_point.get('Phone')
+    cost = bxb_point.get('rate')
+    min_delivery_days = bxb_point.get('min_delivery_days')
+    max_delivery_days = bxb_point.get('max_delivery_days')
+
+    ready_for_yandex_point = convert_region_names_for_yandex(bxb_point)
+    region_id = get_yandex_region_id_from_db(ready_for_yandex_point)
+
     fixed_phone = ''
     if phone:
         fixed_phone = parse_phone(phone)
@@ -110,7 +180,7 @@ def convert_bxb_to_ym(bxb_code: str, bxb_point: dict) -> dict:
         'visibility': 'VISIBLE',
         'address':
             {
-                'regionId': 213,
+                'regionId': region_id,
                 'street': address
             },
         'phones':
@@ -124,82 +194,47 @@ def convert_bxb_to_ym(bxb_code: str, bxb_point: dict) -> dict:
         'deliveryRules':
             [
                 {
-                    'cost': ym_config['delivery_cost'],
-                    'minDeliveryDays': ym_config['min_delivery_days'],
-                    'maxDeliveryDays': ym_config['max_delivery_days'],
+                    'cost': cost,
+                    'minDeliveryDays': min_delivery_days,
+                    'maxDeliveryDays': max_delivery_days,
                     'deliveryServiceId': 106
                 }
             ],
         'emails':
-            [general_config['emails'],]
+            emails
     }
 
 
 def delete_all_boxberry_points():
-    ym_client = YandexMarketClient(
-        ym_token=ym_config['ym_token'],
-        ym_client_id=ym_config['ym_client_id'],
-        ym_campaign_id=ym_config['campaign_id']
-    )
     existing_ym_codes = ym_client.get_outlets_by_type(outlet_type='bxb')
     for existing_code, existing_outlet in existing_ym_codes.items():
         ym_client.delete_outlet(existing_outlet.get('id'))
 
 
-def run(update_existing: bool, recreate_yandex_base: bool):
+def update_regions_db():
+    all_points = bxb_client.get_points_list()
 
-    bxb_client = BoxberryClient(token=bxb_config['boxberry_token'])
-    ym_client = YandexMarketClient(
-        ym_token=ym_config['ym_token'],
-        ym_client_id=ym_config['ym_client_id'],
-        ym_campaign_id=ym_config['campaign_id']
-    )
+    for point in all_points:
+        point = convert_region_names_for_yandex(point)
+        city_name = point.get('CityName')
+        region = point.get('Area')
 
-    if recreate_yandex_base:
-        all_points = bxb_client.get_points_list()
+        city_instance = session.query(YandexRegion).filter_by(city_name=city_name, region=region).one_or_none()
 
-        for point in all_points:
-            point = convert_region_names_for_yandex(point)
-            city_name = point.get('CityName')
-            region = point.get('Area')
-            rate_zone = point.get('TariffZone')
+        if not city_instance or city_instance.updated != date.today():
+            try:
+                region_id = ym_client.get_region_id(point)
+            except ClientError:
+                continue
+            else:
+                YandexRegion.create_or_update(city_name=city_name,
+                                              yandex_id=region_id,
+                                              region=region)
 
-            city_instance = session.query(YandexRegion).filter_by(city_name=city_name, region=region).one_or_none()
 
-            if not city_instance or city_instance.updated != date.today():
-                try:
-                    region_id = ym_client.get_region_id(point)
-                except ClientError:
-                    continue
-                else:
-                    YandexRegion.create_or_update(city_name=city_name,
-                                                  yandex_id=region_id,
-                                                  region=region,
-                                                  rate_zone=rate_zone)
-
-    return
-
-    existing_ym_codes = ym_client.get_outlets_by_type(outlet_type='bxb')
-    logger.info(msg='Got {} existing Boxberry points from YM'.format(len(existing_ym_codes)))
-
-    if update_existing:
-        exclude = set()
-    else:
-        exclude = set(existing_ym_codes.keys())
-
-    region_names = bxb_config['region_names'].split(',')
-    all_points_in_cities = get_city_bxb_points(bxb_client, get_all_cities(bxb_client, region_names))
-
-    active_boxberry_points = get_bxb_detailed_points(
-        bxb_client,
-        points_codes=all_points_in_cities,
-        exclude=exclude
-    )
-
-    logger.info(msg='Got {} points from Boxberry'.format(len(active_boxberry_points)))
-
+def delete_missing_outlets(existing_ym_codes, points_from_bxb_response):
     # Remove points from YandexMarket if not found on Boxberry
-    prefixed_points_codes = ['bxb_{}'.format(point_code) for point_code in all_points_in_cities]
+    prefixed_points_codes = ['bxb_{}'.format(point_code) for point_code in points_from_bxb_response]
     removed_points_count = 0
 
     for code, outlet in existing_ym_codes.items():
@@ -207,56 +242,121 @@ def run(update_existing: bool, recreate_yandex_base: bool):
             try:
                 ym_client.delete_outlet(outlet.get('id'))
             except ClientError or ClientConnectionError as e:
-                logger.error(msg='Can not delete Boxberry point from YM: {}'.format(e))
+                logger.error(msg='Can not delete Boxberry point from Yandex.Market: {}'.format(e))
             else:
                 removed_points_count += 1
-                logger.info(msg='Point id: {}, name: {} was deleted from YM'.format(code, outlet.get('name')))
+                logger.info(
+                    msg='Point id: {}, name: {} was deleted from Yandex.Market'.format(code, outlet.get('name')))
 
-    logger.info(msg='Removed {} outlets from YM'.format(removed_points_count))
+    logger.info(msg='Removed {} outlets from Yandex.Market'.format(removed_points_count))
 
-    if update_existing:
-        # Update existing points (outlets) on Yandex
 
-        updated_outlets_count = 0
-        for bxb_point_code, bxb_point in active_boxberry_points.items():
-            if bxb_point_code in existing_ym_codes.keys():
-                try:
-                    updated_point_data = convert_bxb_to_ym(bxb_point_code, bxb_point)
-                except PointParseError as e:
-                    logger.error(msg='Can not convert point data: {}'.format(e))
-                    continue
-                try:
-                    ym_client.update_outlet(existing_ym_codes[bxb_point_code].get('id'), updated_point_data)
-                    time.sleep(1)
-                except ClientError or ClientConnectionError as e:
-                    logger.error(msg='Can not update Boxberry point on YM: {}'.format(e))
-                else:
-                    updated_outlets_count += 1
-                    logger.info(msg='Point id: {}, address: {} was updated on YM'.format(bxb_point_code,
-                                                                                         bxb_point.get('Address')))
+def update_existing_outlets(existing_ym_codes, active_boxberry_points, emails):
+    updated_outlets_count = 0
 
-        logger.info(msg='Updated {} outlets on YM'.format(updated_outlets_count))
-
-    # Add new found points (outlets) to Yandex
-
-    added_outlets_count = 0
     for bxb_point_code, bxb_point in active_boxberry_points.items():
-        if bxb_point_code not in existing_ym_codes.keys():
+        if bxb_point_code in existing_ym_codes.keys():
+
             try:
-                new_point = convert_bxb_to_ym(bxb_point_code, bxb_point)
+                updated_point_data = convert_bxb_to_ym(bxb_point_code, bxb_point, emails)
             except PointParseError as e:
                 logger.error(msg='Can not convert point data: {}'.format(e))
                 continue
             try:
+                ym_client.update_outlet(existing_ym_codes[bxb_point_code].get('id'), updated_point_data)
+                time.sleep(1)
+            except ClientError or ClientConnectionError as e:
+                logger.error(msg='Can not update Boxberry point on Yandex.Market: {}'.format(e))
+            else:
+                updated_outlets_count += 1
+                logger.info(msg='Point id: {}, address: {} was updated on Yandex.Market'.format(bxb_point_code,
+                                                                                                bxb_point.get(
+                                                                                                    'Address')))
+
+    logger.info(msg='Updated {} outlets on Yandex.Market'.format(updated_outlets_count))
+
+
+def add_new_outlets(existing_ym_codes, active_boxberry_points, emails):
+    added_outlets_count = 0
+
+    for bxb_point_code, bxb_point in active_boxberry_points.items():
+        if bxb_point_code not in existing_ym_codes.keys():
+            try:
+                new_point = convert_bxb_to_ym(bxb_point_code, bxb_point, emails)
+            except PointParseError as e:
+                logger.error(msg='Can not convert point data: {}'.format(e))
+                continue
+
+            try:
                 ym_client.post_outlet(new_point)
                 time.sleep(1)
             except ClientError or ClientConnectionError as e:
-                logger.error(msg='Can not add Boxberry point to YM: {}'.format(e))
+                logger.error(msg='Can not add Boxberry point to Yandex.Market: {}'.format(e))
             else:
                 added_outlets_count += 1
-                logger.info(msg='New point id: {}, address: {} was added to YM'.format(bxb_point_code,
-                                                                                       bxb_point.get('Address')))
-    logger.info(msg='Added {} outlets to YM'.format(added_outlets_count))
+                logger.info(msg='New point id: {}, address: {} was added to Yandex.Market'.format(bxb_point_code,
+                                                                                                  bxb_point.get(
+                                                                                                      'Address')))
+    logger.info(msg='Added {} outlets to Yandex.Market'.format(added_outlets_count))
+
+
+# Setup clients
+
+bxb_client = BoxberryClient(token=bxb_config['boxberry_token'])
+ym_client = YandexMarketClient(
+    ym_token=ym_config['ym_token'],
+    ym_client_id=ym_config['ym_client_id'],
+    ym_campaign_id=ym_config['campaign_id']
+)
+
+
+def run(update_existing: bool, run_update_db: bool):
+    region_names = bxb_config.get('region_names')
+    if region_names:
+        region_names = region_names.split(',')
+
+    city_names = bxb_config.get('city_names')
+    if city_names:
+        city_names = city_names.split(',')
+
+    if not any((city_names, region_names)):
+        raise ConfigError('region_names or city_names definition required in config')
+
+    try:
+        emails = general_config['emails'].split(',')
+        target_start = bxb_config['target_start']
+        default_weight = bxb_config['default_weight']
+    except KeyError as e:
+        raise ConfigError('{} definition required in config'.format(str(e)))
+
+    if run_update_db:
+        update_regions_db()
+
+    existing_ym_codes = ym_client.get_outlets_by_type(outlet_type='bxb')
+    logger.info(msg='Got {} existing Boxberry points from Yandex.Market'.format(len(existing_ym_codes)))
+
+    if update_existing:
+        exclude = set()
+    else:
+        exclude = set(existing_ym_codes.keys())
+
+    points_from_bxb_response = get_city_bxb_points(get_all_cities(region_names, city_names))
+
+    active_boxberry_points = get_bxb_detailed_points(
+        points_codes=points_from_bxb_response,
+        exclude=exclude,
+        target_start=target_start,
+        default_weight=default_weight
+    )
+
+    delete_missing_outlets(existing_ym_codes, points_from_bxb_response)
+
+    if update_existing:
+        # Update existing points (outlets) on Yandex
+        update_existing_outlets(existing_ym_codes, active_boxberry_points, emails)
+
+    # Add new found points (outlets) to Yandex
+    add_new_outlets(existing_ym_codes, active_boxberry_points, emails)
 
 
 if __name__ == '__main__':
