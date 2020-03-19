@@ -154,7 +154,7 @@ class BoxberryClient(Client):
             'method': 'DeliveryCosts',
             'weight': default_weight,
             'target': point_code,
-            'target_start': target_start,
+            'targetstart': target_start,
         }
 
         pr = self.prepare_get(params=params)
