@@ -348,7 +348,7 @@ def run(update_existing: bool, run_update_db: bool):
         points_from_bxb_response = get_city_bxb_points(get_all_cities(region_names, city_names))
 
     active_boxberry_points = get_bxb_detailed_points(
-        points_codes=points_from_bxb_response,
+        points_codes=set(points_from_bxb_response),
         exclude=exclude,
         target_start=target_start,
         default_weight=default_weight
