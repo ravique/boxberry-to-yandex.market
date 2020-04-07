@@ -70,7 +70,7 @@ def get_rate_override(city: str = None, region: str = None):
 def get_bxb_detailed_points(points_codes: set, exclude: set, target_start: str, default_weight: int) -> dict:
     if exclude:
         digit_exclude_codes = [code.replace('bxb_', '') for code in exclude]
-        cleaned_points = points_codes - set(digit_exclude_codes)
+        cleaned_points = set(points_codes) - set(digit_exclude_codes)
         logger.info(msg='{} points yet exist in Yandex.Market'.format(len(points_codes) - len(cleaned_points)))
     else:
         cleaned_points = points_codes
@@ -343,12 +343,12 @@ def run(update_existing: bool, run_update_db: bool):
         exclude = set(existing_ym_codes.keys())
 
     if region_names == ['all']:
-        points_from_bxb_response = bxb_client.get_points_codes_list()
+        points_from_bxb_response = {point.get('Code') for point in bxb_client.get_points_codes_list() if point.get('Code')}
     else:
         points_from_bxb_response = get_city_bxb_points(get_all_cities(region_names, city_names))
 
     active_boxberry_points = get_bxb_detailed_points(
-        points_codes=set(points_from_bxb_response),
+        points_codes=points_from_bxb_response,
         exclude=exclude,
         target_start=target_start,
         default_weight=default_weight
