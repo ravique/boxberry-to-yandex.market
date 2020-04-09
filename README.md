@@ -13,7 +13,7 @@ This software is still in development.
 - Gets detailed data about Boxberry points of selected regions and cities
 - Pushes these points to the Yandex.Market (token is needed)
 - Removes points from Yandex.Market if point does not exist in Boxberry response
-- Writes all actions to the log (info level by default)
+- Writes all actions to the log
 
 # Boxberry client API
 
@@ -46,7 +46,7 @@ If you want to assign custom delivery cost for selected city OR region, add it t
 ```ini
 [Boxberry]
 boxberry_token=<boxberry_token>
-region_names=<region name or region names, split by comma OR all if you ship Russia-wide>
+region_names=<region name or region names, split by comma OR 'all' if you ship Russia-wide>
 city_names=<city name or city names, split by comma>
 target_start=<boxberry id of your drop off point> 
 default_weight=<default parcel weight in grams>
@@ -62,6 +62,7 @@ campaign_id=<yandex_market_campaign_id>
 [General]
 max_attempts=<sometimes, Yandex responds with 5xx code. number of attempts, default 10>
 emails=<email/s of your shop, split by comma>
+log_file_name=<log_file_name, 'all_log.log by default'>
 ```
 
 # Launch params
