@@ -4,7 +4,7 @@ from copy import deepcopy
 from typing import Optional, Union
 
 import requests
-from requests import ReadTimeout
+from requests import RequestException
 
 from config_parser import general_config
 from errors import BoxberryError, ClientError, ClientConnectionError
@@ -78,12 +78,11 @@ class Client:
         response = 'No response'
 
         for i in range(1, int(general_config['max_attempts'])):
-
             try:
                 response = self._session.send(prepared_request, timeout=self._timeout)
-            except ReadTimeout:
+            except RequestException as e:
+                logger.warn(msg=e)
                 continue
-
             try:
                 dict_response = self.check_and_convert_response(response)
             except ClientConnectionError:
