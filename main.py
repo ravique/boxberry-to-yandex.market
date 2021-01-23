@@ -77,7 +77,7 @@ def get_bxb_detailed_points(points_codes: set, exclude: set, target_start: str, 
 
     points_detailed_dict = dict()
 
-    logger.info(msg='Begin to get detailed info about {} points'.format(len(cleaned_points)))
+    logger.info(msg='Begin to get detailed info about {} points from Boxberry'.format(len(cleaned_points)))
     for point_code in cleaned_points:
         try:
             detailed_point = bxb_client.get_point_info(point_code=point_code)
@@ -116,6 +116,7 @@ def get_bxb_detailed_points(points_codes: set, exclude: set, target_start: str, 
         except PointParseError as e:
             logger.warning(msg=e)
         else:
+            logger.info(str(detailed_point)) # FIXME
             points_detailed_dict['bxb_{}'.format(point_code)] = detailed_point
 
     logger.info(msg='Got {} points from Boxberry'.format(len(points_detailed_dict)))
