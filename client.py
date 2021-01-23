@@ -22,10 +22,10 @@ class Client:
     def check_and_convert_response(self, response: requests.Response) -> Union[dict, list]:
         status_code = response.status_code
 
-        if str(status_code)[0] == '5' or status_code == 404:  # Server, connection error or 404
+        if str(status_code).startswith('5') or str(status_code) == '404':  # Server, connection error or 404
             raise ClientConnectionError(service=self.service_name, error_text=response.text)
 
-        elif str(status_code)[0] != '2':
+        elif not str(status_code).startswith('2'):
             raise ClientError(service=self.service_name, error_text=response.text)
 
         return json.loads(response.text)
@@ -74,28 +74,34 @@ class Client:
 
     def send(self,
              prepared_request: requests.PreparedRequest,
-             timeout: int = 10) -> Union[list, dict]:
+             timeout: int = 10,
+             max_attempts: int = int(general_config['max_attempts'])
+             ) -> Union[list, dict]:
+
         response = 'No response'
 
-        for i in range(1, int(general_config['max_attempts'])):
+        for i in range(0, max_attempts):
             try:
                 response = self._session.send(prepared_request, timeout=self._timeout)
             except RequestException as e:
-                logger.warn(msg=e)
+                logger.warning(msg=e)
                 continue
-            try:
-                dict_response = self.check_and_convert_response(response)
-            except ClientConnectionError:
-                logger.warn(msg='{} did not respond. Attempt  #{}'.format(self.service_name, i))
-                # Try to perform new request
-                time.sleep(timeout)
-            except ClientError as e:
-                logger.error(msg=e)
-                raise e
             else:
-                return dict_response
-        raise ClientConnectionError('Can not get data after {} attempts. {}'.format(int(general_config['max_attempts']),
-                                                                                    response.text))
+                try:
+                    dict_response = self.check_and_convert_response(response)
+                except ClientConnectionError:
+                    logger.warning(msg='{} did not respond. Attempt  #{}'.format(self.service_name, i))
+                    # Try to perform new request
+                    time.sleep(timeout)
+                except ClientError as e:
+                    logger.error(msg=e)
+                    raise e
+                else:
+                    return dict_response
+        raise ClientConnectionError('Can not get data after {} attempts. {}'.format(
+            max_attempts,
+            getattr(response, 'text', 'No text')
+        ))
 
 
 class BoxberryClient(Client):
@@ -109,13 +115,13 @@ class BoxberryClient(Client):
 
     def check_and_convert_response(self, response: requests.Response) -> Union[dict, list]:
         status_code = response.status_code
-        loaded_response = json.loads(response.text)
+        loaded_response = json.loads(response.text) if response.text else None
 
-        if str(status_code)[0] == '5' or status_code in (404, 402):
+        if str(status_code).startswith('5') or str(status_code) in ('404', '402'):
             # Server, connection error, 404 or incorrect `402: Hit rate limit of 2 parallel requests`
             raise ClientConnectionError(service=self.service_name, error_text=response.text)
 
-        elif str(status_code)[0] != '2':
+        elif not str(status_code).startswith('2'):
             if isinstance(loaded_response, dict) and 'err' in loaded_response.keys():
                 raise BoxberryError(loaded_response['err'])
             if isinstance(loaded_response, list) and 'err' in loaded_response[0].keys():
@@ -169,7 +175,7 @@ class BoxberryClient(Client):
         for city_name in city_names:
             city_code = [city['Code'] for city in self.get_cities() if city['Name'] in city_name]
             if not city_code:
-                logger.warn(msg='No city code found for city {}'.format(city_name))
+                logger.warning(msg='No city code found for city {}'.format(city_name))
                 continue
             city_codes.append(city_code)
 
